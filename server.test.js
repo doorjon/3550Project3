@@ -14,4 +14,10 @@ it('testing /auth', async done => {
     done()
 })
 
+it('testing /register', async done => {
+    const response = await request.post('/register')
+    expect(response.status).toBe(201)
+    done()
+})
+
 // ref: https://zellwk.com/blog/endpoint-testing/
