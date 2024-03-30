@@ -14,10 +14,7 @@ const encryptionKey  = process.env.NOT_MY_KEY;
 
 if (!encryptionKey ) {
   console.error("Environment variable NOT_MY_KEY is not set.");
-  process.exit(1); // Exit the process if the key is not set
-}
-else{
-  console.log(encryptionKey);
+  process.exit(1);
 }
 
 let keyPair;
@@ -30,6 +27,7 @@ let parsedKey;
 // Middleware to parse JSON and URL-encoded bodies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(rateLimiter);
 
 // create db tables
 db.run('CREATE TABLE IF NOT EXISTS keys(kid INTEGER PRIMARY KEY AUTOINCREMENT,key BLOB NOT NULL,exp INTEGER NOT NULL)');
@@ -96,15 +94,14 @@ function generateExpiredJWT() {
 }
 
 function rateLimiter(req, res, next) {
-  const now = Date.now();
-  const windowMs = 1000; // 1 second
-  const maxRequests = 10; // 10 requests per second
+  const current_time = Date.now();
+  const seconds = 1000; // 1 second
+  const maxRequests = 10;
   const ipAddress = req.ip;
 
-  db.all('SELECT request_timestamp FROM auth_logs WHERE request_ip = ? AND request_timestamp > ?', [ipAddress, now - windowMs], (err, rows) => {
+  db.all('SELECT request_timestamp FROM auth_logs WHERE request_ip = ? AND request_timestamp > ?', [ipAddress, current_time - seconds], (err, rows) => {
     if (err) {
-      console.error('Error checking rate limit:', err.message);
-      return res.status(500).json({ error: 'Internal server error' });
+      console.error('Error checking rate limiter:', err.message);
     }
 
     if (rows.length >= maxRequests) {
@@ -137,11 +134,12 @@ app.get('/.well-known/jwks.json', (req, res) => {
 });
 
 app.post('/auth', rateLimiter, (req, res) => {
-  const requestIP = req.ip; // Retrieve the IP address of the request
-  const timestamp = new Date().toISOString(); // Get current timestamp
-  const { username } = req.body; // Assuming username is sent in the request body
+  // get user info
+  const requestIP = req.ip;
+  const timestamp = new Date().toISOString();
+  const { username } = req.body;
 
-  // Insert log into auth_logs table
+  // insert request into database
   db.run(`INSERT INTO auth_logs (request_ip, request_timestamp, user_id) VALUES (?, ?, (SELECT id FROM users WHERE username = ?))`, [requestIP, timestamp, username], function(err) {
     if (err) {
       console.error('Error inserting authentication log:', err);
@@ -160,22 +158,22 @@ app.post('/auth', rateLimiter, (req, res) => {
 
 app.post('/register', async (req, res) => {
   try {
+    // get username and generate password
     const { username, email } = req.body;
     const password = uuidv4();
     const hashedPassword = await argon2.hash(password);
 
+    // insert user into database
     db.run(`INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)`, [username, hashedPassword, email], function(err) {
       if (err) {
         console.error('Error inserting user:', err);
         return res.status(500).json({ error: 'Error registering user' });
       }
 
-      // User inserted successfully, send response
       res.status(201).json({ password });
     });
   } catch (error) {
-    console.error('Error during registration:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error during registration: ', error);
   }
 })
 
